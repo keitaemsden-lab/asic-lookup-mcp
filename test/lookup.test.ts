@@ -396,6 +396,40 @@ describe('lookupCompany accounting, against a fetch that really signs', () => {
     expect(ledger.spentAtomic).toBe(10_000n);
   });
 
+  it('attributes every signature to its own lookup under genuine concurrency', async () => {
+    // One paying fetch is shared by every concurrent tool call, so the hook that
+    // reports a signature has to know WHICH lookup it belongs to. That is what
+    // the AsyncLocalStorage observer is for, and a mis-attribution would put a
+    // signature on the wrong reservation -- or on none, which is money the cap
+    // never sees. Interleave the legs so they overlap in every order.
+    const ledger = new SpendLedger(5_000_000n);
+    let index = 0;
+    const api = payingApi(() => {
+      // Half the queries hit and are charged, half miss and are held as exposure.
+      const hit = (index += 1) % 2 === 1;
+      return hit
+        ? json(200, PAID_OK)
+        : json(404, { charged: false, count: 0, results: [] });
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 40 }, (_, n) =>
+        lookupCompany({ name: `q${n}` }, { config: config(), fetchWithPay: api.fetch, ledger }),
+      ),
+    );
+
+    const hits = results.filter((result) => result.found).length;
+    const misses = results.length - hits;
+    expect(hits).toBeGreaterThan(0);
+    expect(misses).toBeGreaterThan(0);
+    // Every one of the 40 signatures landed somewhere, and on the right side.
+    expect(ledger.spentAtomic).toBe(BigInt(hits) * 10_000n);
+    expect(ledger.outstandingAtomic).toBe(BigInt(misses) * 10_000n);
+    expect(ledger.spentAtomic + ledger.outstandingAtomic).toBe(400_000n);
+    expect(ledger.reservedAtomic).toBe(0n);
+    expect(ledger.chargedCallCount).toBe(hits);
+  });
+
   it('tells the caller it was charged when a 200 returns no records', async () => {
     const ledger = new SpendLedger(1_000_000n);
     const api = payingApi(() =>
