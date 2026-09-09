@@ -149,6 +149,10 @@ export class SpendLedger {
     let settled = false;
     const signatures: SignedAuthorisation[] = [];
     const ledger = this;
+    // Declared ahead of the literal so `settleDefault` reaches the other two
+    // through the closure rather than through `this`, which a caller passing
+    // `reservation.settleDefault` as a callback would lose.
+    let reservation: Reservation;
 
     /** Everything this lookup has authorised, whatever the response says about it. */
     function signedTotal(): bigint {
@@ -165,7 +169,7 @@ export class SpendLedger {
       return latest;
     }
 
-    return {
+    reservation = {
       reservedAtomic: atomic,
       noteSignature(signature: SignedAuthorisation): void {
         signatures.push(signature);
@@ -196,10 +200,11 @@ export class SpendLedger {
         if (settled) return;
         // A signature exists and nobody told us what became of it: charge it.
         // Over-reporting spend stops early, under-reporting spends the money.
-        if (signatures.length > 0) this.commit();
-        else this.release();
+        if (signatures.length > 0) reservation.commit();
+        else reservation.release();
       },
     };
+    return reservation;
   }
 
   /** A one-line summary safe to put in a tool result. Contains no key material. */
