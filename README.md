@@ -3,10 +3,10 @@
 > [!CAUTION]
 > **Pre-release. Not published, and not yet cleared for a funded wallet.** An independent review on
 > 2026-09-09 proved the spend cap did not bound what this server could authorise. All six blockers are
-> now fixed and each fix has a test that fails when the fix is reverted — see
-> [REVIEW-FINDINGS.md](REVIEW-FINDINGS.md) for the findings and the evidence. A second independent
-> review of those fixes is the remaining gate. Nothing is on npm. Read the code before you point a key
-> at it.
+> now fixed, a second independent review found one further blocker which is also fixed, and each fix
+> has a test that fails when the fix is reverted — see [REVIEW-FINDINGS.md](REVIEW-FINDINGS.md) for
+> the findings and the evidence. Nothing is on npm, and publish is the maintainer's call. Read the
+> code before you point a key at it.
 
 An MCP server that looks up Australian companies by ABN, ACN or company name against the ASIC Company Register — about 4 million companies.
 
@@ -85,7 +85,7 @@ chmod 600 ~/.config/asic-lookup/key
 | `PRIVATE_KEY_FILE` | one of these two | — | Path to a file containing the wallet's private key. |
 | `PRIVATE_KEY` | one of these two | — | The key itself, `0x` + 64 hex characters. |
 | `MAX_PRICE_USD_PER_CALL` | no | `0.01` | The most one lookup may cost. A `402` asking for more is refused, not paid. |
-| `REQUEST_TIMEOUT_MS` | no | `45000` | How long to wait for the API, **per network attempt**. The paid retry gets its own budget rather than the leftovers of the unpaid one. 1000–300000. |
+| `REQUEST_TIMEOUT_MS` | no | `45000` | How long to wait for the API, **per network attempt**. The paid retry gets its own budget rather than the leftovers of the unpaid one, so a paid lookup's worst case is roughly twice this. 1000–300000. |
 | `EXPECTED_PAY_TO` | no | the endpoint's published payee | The only address this server will sign a transfer to. Change it only with `API_BASE_URL`, and only deliberately. |
 | `MAX_AUTHORISATION_SECONDS` | no | `600` | The longest a signature this server produces may stay spendable. A `402` asking for more is refused. 30–3600. |
 | `API_BASE_URL` | no | `https://api.nightshiftbuilds.com` | Override the endpoint. Must be https. |
@@ -146,7 +146,7 @@ The full dataset is free to download from data.gov.au. This is a lookup service,
 
 ```bash
 npm install
-npm test          # 133 tests: no wallet needed, no money spent
+npm test          # 139 tests: no wallet needed, no money spent
 npm run build
 ```
 

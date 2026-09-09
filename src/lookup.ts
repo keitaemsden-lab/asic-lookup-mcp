@@ -113,6 +113,28 @@ export function buildQuery(args: LookupArgs): URLSearchParams {
   return params;
 }
 
+/**
+ * The identity of a lookup for latching purposes.
+ *
+ * Not `params.toString()`: the API matches names case-insensitively and `limit`
+ * does not change the price, so `woolworths`, `Woolworths` and
+ * `woolworths&limit=5` are one lookup wearing three query strings. Latching on
+ * the raw string let a caller sign a fresh authorisation for each of them, which
+ * is exactly the retry loop the latch exists to stop.
+ */
+function buildLatchKey(params: URLSearchParams): string {
+  const name = params.get('name');
+  if (name !== null) return `name=${name.trim().toLowerCase()}`;
+  const abn = params.get('abn');
+  if (abn !== null) return `abn=${abn}`;
+  return `acn=${params.get('acn') ?? ''}`;
+}
+
+/** Bound a string from outside this process before it reaches a tool result. */
+export function clip(text: string, limit: number): string {
+  return text.length <= limit ? text : `${text.slice(0, limit)}... (truncated)`;
+}
+
 function priceToAtomic(priceUsd: unknown): bigint | null {
   if (typeof priceUsd !== 'number' && typeof priceUsd !== 'string') return null;
   try {
@@ -120,6 +142,22 @@ function priceToAtomic(priceUsd: unknown): bigint | null {
   } catch {
     return null;
   }
+}
+
+/** Whatever the API called a former name, rendered as strings without losing any. */
+function toFormerNames(value: unknown): string[] {
+  if (value === null || value === undefined) return [];
+  const entries = Array.isArray(value) ? value : [value];
+  const names: string[] = [];
+  for (const entry of entries) {
+    if (typeof entry === 'string') names.push(entry);
+    else if (typeof entry === 'number' || typeof entry === 'boolean') names.push(String(entry));
+    else if (entry !== null && entry !== undefined) {
+      const named = (entry as Record<string, unknown>)['name'];
+      names.push(typeof named === 'string' ? named : JSON.stringify(entry));
+    }
+  }
+  return names;
 }
 
 /** A field the API declares as a nullable string, coerced to one or to null. */
@@ -142,9 +180,10 @@ function nullableString(value: unknown): string | null {
  */
 export function normaliseCompany(record: unknown): Company {
   const raw = (typeof record === 'object' && record !== null ? record : {}) as Record<string, unknown>;
-  const formerNames = Array.isArray(raw['former_names'])
-    ? raw['former_names'].filter((name): name is string => typeof name === 'string')
-    : [];
+  // Coerce rather than discard. Dropping a former name because it arrived as an
+  // object is the same class of loss as the SDK discarding the whole record,
+  // just quieter -- and this is a field the caller has already paid for.
+  const formerNames = toFormerNames(raw['former_names']);
   return {
     ...raw,
     company_name: typeof raw['company_name'] === 'string' ? raw['company_name'] : '(name not returned)',
@@ -191,10 +230,10 @@ export async function lookupCompany(
 ): Promise<LookupResult> {
   const { config, fetchWithPay, ledger, latch } = deps;
   const params = buildQuery(args);
-  const query = params.toString();
-  const url = `${config.apiBaseUrl}/v1/company?${query}`;
+  const url = `${config.apiBaseUrl}/v1/company?${params.toString()}`;
+  const latchKey = buildLatchKey(params);
 
-  const heldMs = latch?.heldMs(query) ?? null;
+  const heldMs = latch?.heldMs(latchKey) ?? null;
   if (heldMs !== null) {
     throw new LookupError(
       `this exact query already produced a payment whose outcome was never learnt, and the ` +
@@ -215,7 +254,30 @@ export async function lookupCompany(
 
   /** Hold the query against a retry for as long as the signature stays spendable. */
   function latchQuery(): void {
-    latch?.hold(query, config.maxAuthorisationSeconds * 1000);
+    latch?.hold(latchKey, config.maxAuthorisationSeconds * 1000);
+  }
+
+  /**
+   * A throw arrived and a signature already exists. Charge it, latch the query,
+   * and say so.
+   *
+   * Used by BOTH throw paths. They are the same situation seen at two moments --
+   * before the response and while reading it -- and the second one is easy to
+   * leave as a bare `finally` that settles correctly and tells the caller
+   * nothing. A model given `Lookup failed. terminated` and no latch will retry,
+   * and each retry is another authorisation.
+   */
+  function chargedThrow(error: unknown, when: string): never {
+    reservation.commit();
+    latchQuery();
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new LookupError(
+      `the request failed ${when}, after a payment authorisation had already been signed and sent, ` +
+        `so USD ${formatUsd(config.maxPricePerCallAtomic)} MAY have left the wallet. It has been ` +
+        'debited against the cap, and this query is held against a retry until the authorisation ' +
+        `expires. The failure was: ${clip(reason, 300)}`,
+      'unknown',
+    );
   }
 
   let response: Response;
@@ -224,22 +286,11 @@ export async function lookupCompany(
       fetchWithPay(url, { headers: { Accept: 'application/json' } }),
     );
   } catch (error) {
-    if (signatures.length > 0) {
-      // A signed authorisation went to the payee before this threw. Whether the
-      // request reached the resource server or the facilitator settled it is
-      // exactly what we do not know, and the payee has a valid signature either
-      // way. Releasing here is how a timeout became free money for the payee.
-      reservation.commit();
-      latchQuery();
-      const reason = error instanceof Error ? error.message : String(error);
-      throw new LookupError(
-        `the request failed after a payment authorisation had already been signed and sent, so USD ` +
-          `${formatUsd(config.maxPricePerCallAtomic)} MAY have left the wallet. It has been debited ` +
-          `against the cap, and this query is held against a retry until the authorisation expires. ` +
-          `The failure was: ${reason}`,
-        'unknown',
-      );
-    }
+    // A signed authorisation went to the payee before this threw. Whether the
+    // request reached the resource server or the facilitator settled it is
+    // exactly what we do not know, and the payee has a valid signature either
+    // way. Releasing here is how a timeout became free money for the payee.
+    if (signatures.length > 0) chargedThrow(error, 'before any response arrived');
     // No signature was ever created, so nothing can settle.
     reservation.release();
     throw error;
@@ -368,24 +419,40 @@ export async function lookupCompany(
     throw new LookupError(
       `unexpected ${response.status} from the API: ${detail(body, bodyText)}. Nothing was settled.`,
     );
+  } catch (error) {
+    // The branches above throw LookupErrors that have already settled, latched
+    // and explained themselves; pass those through untouched. Anything else
+    // escaped mid-flight -- a body stream that died, most likely -- and the
+    // `finally` below would charge for it silently. Charging silently is the
+    // defect the pre-response path was fixed for; it must not survive here.
+    if (error instanceof LookupError) throw error;
+    if (signatures.length > 0) chargedThrow(error, 'while reading the response body');
+    throw error;
   } finally {
-    // No-op when one of the branches above already settled. When none did --
-    // a body that never arrived, or anything else thrown on the way -- this
-    // charges if a signature exists and releases if none does.
+    // No-op when one of the branches above already settled. Last resort for a
+    // path that reaches neither an explicit outcome nor the catch above.
     reservation.settleDefault();
   }
 }
 
 function detail(body: Record<string, unknown>, bodyText: string): string {
+  // Every branch here is text the endpoint chose. It ends up in a tool result,
+  // which is a model's context, so all three are bounded -- not just the raw
+  // body, which was the only one that used to be.
   const detailValue = body['detail'] ?? body['error'];
-  if (typeof detailValue === 'string') return detailValue;
-  if (detailValue !== undefined) return JSON.stringify(detailValue);
-  return bodyText.slice(0, 300) || '(no body)';
+  if (typeof detailValue === 'string') return clip(detailValue, 300);
+  if (detailValue !== undefined) return clip(JSON.stringify(detailValue), 300);
+  return clip(bodyText, 300) || '(no body)';
 }
 
 function firstPrice(body: Record<string, unknown>): string | null {
   const accepts = body['accepts'];
   if (!Array.isArray(accepts) || accepts.length === 0) return null;
-  const atomic = atomicFromRequirement(accepts[0] as Record<string, unknown>);
+  // Read the price the way the document's own version would be signed. The two
+  // fields agree today, so this is only ever cosmetic here -- but a version-blind
+  // read is the bug SF1 fixed everywhere else, and leaving one behind invites
+  // the next reader to copy it.
+  const version = typeof body['x402Version'] === 'number' ? body['x402Version'] : 1;
+  const atomic = atomicFromRequirement(accepts[0] as Record<string, unknown>, version);
   return atomic === null ? null : formatUsd(atomic);
 }

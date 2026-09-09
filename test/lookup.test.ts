@@ -310,6 +310,46 @@ describe('lookupCompany accounting, against a fetch that really signs', () => {
     expect(ledger.remainingAtomic).toBe(990_000n);
   });
 
+  it('tells the caller a dropped body may have cost money, and latches the query', async () => {
+    // The path B3's try/finally created. It settled correctly and said nothing:
+    // `Lookup failed. terminated`, no `charged: unknown`, no latch -- so a model
+    // in a loop burned the cap a cent at a time while being told nothing moved.
+    // That is the B4 defect wearing a different hat.
+    const ledger = new SpendLedger(1_000_000n);
+    const latch = new RetryLatch();
+    const api = payingApi(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new TypeError('terminated'));
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    const deps = { config: config(), fetchWithPay: api.fetch, ledger, latch };
+
+    const error = await lookupCompany({ name: 'woolworths' }, deps).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+
+    expect(error).toBeInstanceOf(LookupError);
+    expect((error as LookupError).charged).toBe('unknown');
+    expect((error as Error).message).toMatch(/MAY have left the wallet/);
+    expect((error as Error).message).toMatch(/while reading the response body/);
+    expect(ledger.spentAtomic).toBe(10_000n);
+
+    // And the retry is refused rather than signing a second authorisation.
+    const signaturesSoFar = api.attempts.filter((attempt) => attempt.paid).length;
+    await expect(lookupCompany({ name: 'woolworths' }, deps)).rejects.toThrow(
+      /authorisation it signed is still live/,
+    );
+    expect(api.attempts.filter((attempt) => attempt.paid)).toHaveLength(signaturesSoFar);
+    expect(ledger.spentAtomic).toBe(10_000n);
+  });
+
   it('keeps taking lookups after a hundred failed body reads', async () => {
     const ledger = new SpendLedger(100_000_000n); // USD 100
     const api = payingApi(
@@ -439,6 +479,38 @@ describe('lookupCompany outcomes', () => {
       });
   });
 
+  it('latches on the lookup, not on the query string that spelled it', async () => {
+    // The API matches names case-insensitively and `limit` does not change the
+    // price, so these are one lookup wearing four query strings. Latching on
+    // `params.toString()` let a caller sign a fresh authorisation for each.
+    const ledger = new SpendLedger(1_000_000n);
+    const latch = new RetryLatch();
+    const api = respond(503, { charged: 'unknown' });
+    const deps = { config: config(), fetchWithPay: api.fetch, ledger, latch };
+
+    await expect(lookupCompany({ name: 'woolworths' }, deps)).rejects.toThrow(/never learnt/);
+    expect(api.urls).toHaveLength(1);
+
+    for (const args of [
+      { name: 'woolworths' },
+      { name: 'Woolworths' },
+      { name: 'WOOLWORTHS' },
+      { name: ' woolworths ' },
+      { name: 'woolworths', limit: 5 },
+    ]) {
+      await expect(lookupCompany(args, deps), JSON.stringify(args)).rejects.toThrow(
+        /authorisation it signed is still live/,
+      );
+    }
+    // Not one of them became a request, so not one signed anything.
+    expect(api.urls).toHaveLength(1);
+    expect(ledger.spentAtomic).toBe(10_000n);
+
+    // A genuinely different company is unaffected.
+    await expect(lookupCompany({ name: 'coles' }, deps)).rejects.toThrow(/never learnt/);
+    expect(api.urls).toHaveLength(2);
+  });
+
   it('releases the reservation on a rate limit and surfaces Retry-After in both forms', async () => {
     const seconds = respond(429, { detail: 'slow down' }, { 'retry-after': '30' });
     await expect(
@@ -539,5 +611,23 @@ describe('normaliseCompany', () => {
 
   it('leaves a well-formed record untouched', () => {
     expect(normaliseCompany(COMPANY)).toEqual(COMPANY);
+  });
+
+  it('coerces a former name rather than dropping it', () => {
+    // Dropping a former name because it arrived in an unexpected shape is the
+    // same loss the SDK's discard was, just quieter -- and it is a field the
+    // caller has already paid for.
+    expect(normaliseCompany({ ...COMPANY, former_names: 'OLD PTY LTD' }).former_names).toEqual([
+      'OLD PTY LTD',
+    ]);
+    expect(
+      normaliseCompany({ ...COMPANY, former_names: [{ name: 'OLD PTY LTD' }] }).former_names,
+    ).toEqual(['OLD PTY LTD']);
+    expect(
+      normaliseCompany({ ...COMPANY, former_names: ['A', { name: 'B' }, 'C'] }).former_names,
+    ).toEqual(['A', 'B', 'C']);
+    const opaque = normaliseCompany({ ...COMPANY, former_names: [{ was: 'X' }] }).former_names;
+    expect(opaque).toHaveLength(1);
+    expect(opaque[0]).toContain('X');
   });
 });
