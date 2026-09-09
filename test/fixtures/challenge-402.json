@@ -1,0 +1,214 @@
+{
+  "captured": "2026-09-09",
+  "source": "GET https://api.nightshiftbuilds.com/v1/company?name=woolworths with no payment header",
+  "status": 402,
+  "paymentRequiredHeader": "eyJ4NDAyVmVyc2lvbiI6MiwiZXJyb3IiOiJwYXltZW50IHJlcXVpcmVkIiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkubmlnaHRzaGlmdGJ1aWxkcy5jb20vdjEvY29tcGFueSIsImRlc2NyaXB0aW9uIjoiT25lIEF1c3RyYWxpYW4gY29tcGFueSByZWdpc3RlciBsb29rdXAgYnkgQUJOLCBBQ04gb3IgbmFtZS4iLCJtaW1lVHlwZSI6ImFwcGxpY2F0aW9uL2pzb24iLCJzZXJ2aWNlTmFtZSI6IkFTSUMgY29tcGFueSBsb29rdXAiLCJ0YWdzIjpbImF1c3RyYWxpYSIsImFzaWMiLCJjb21wYW55LWRhdGEiLCJhYm4tbG9va3VwIiwiYnVzaW5lc3MtcmVnaXN0cnkiXX0sImFjY2VwdHMiOlt7InNjaGVtZSI6ImV4YWN0IiwibmV0d29yayI6ImVpcDE1NTo4NDUzIiwiYXNzZXQiOiIweDgzMzU4OWZDRDZlRGI2RTA4ZjRjN0MzMkQ0ZjcxYjU0YmRBMDI5MTMiLCJwYXlUbyI6IjB4QWU2NjA2ZkRjNWU4YjYzQkE2Mjg2M0UxMzBkRWVhZDJmQWRhRTMxZiIsInJlc291cmNlIjoiaHR0cHM6Ly9hcGkubmlnaHRzaGlmdGJ1aWxkcy5jb20vdjEvY29tcGFueSIsImRlc2NyaXB0aW9uIjoiT25lIEF1c3RyYWxpYW4gY29tcGFueSByZWdpc3RlciBsb29rdXAgYnkgQUJOLCBBQ04gb3IgbmFtZS4iLCJtaW1lVHlwZSI6ImFwcGxpY2F0aW9uL2pzb24iLCJtYXhUaW1lb3V0U2Vjb25kcyI6MzAwLCJleHRyYSI6eyJuYW1lIjoiVVNEIENvaW4iLCJ2ZXJzaW9uIjoiMiJ9LCJvdXRwdXRTY2hlbWEiOnsiaW5wdXQiOnsidHlwZSI6Imh0dHAiLCJtZXRob2QiOiJHRVQiLCJkaXNjb3ZlcmFibGUiOnRydWUsInF1ZXJ5UGFyYW1zIjp7Im5hbWUiOiJ3b29sd29ydGhzIiwibGltaXQiOjV9fSwib3V0cHV0Ijp7InR5cGUiOiJqc29uIiwiZm9ybWF0IjoiYXBwbGljYXRpb24vanNvbiIsImV4YW1wbGUiOnsicXVlcnkiOnsibmFtZSI6Indvb2x3b3J0aHMifSwiY291bnQiOjEsImNoYXJnZWQiOnRydWUsInJlc3VsdHMiOlt7ImNvbXBhbnlfbmFtZSI6IldPT0xXT1JUSFMgR1JPVVAgTElNSVRFRCIsImFjbiI6IjAwMDAxNDY3NSIsImFibiI6Ijg4MDAwMDE0Njc1Iiwic3RhdHVzIjoiUmVnaXN0ZXJlZCIsImVudGl0eV90eXBlIjoiQXVzdHJhbGlhbiBwdWJsaWMgY29tcGFueSIsImRhdGVfb2ZfcmVnaXN0cmF0aW9uIjoiMTkyNC0wOS0yMiJ9XX19fSwiYW1vdW50IjoiMTAwMDAiLCJtYXhBbW91bnRSZXF1aXJlZCI6IjEwMDAwIn1dLCJleHRlbnNpb25zIjp7ImJhemFhciI6eyJpbmZvIjp7ImlucHV0Ijp7InR5cGUiOiJodHRwIiwibWV0aG9kIjoiR0VUIiwiZGlzY292ZXJhYmxlIjp0cnVlLCJxdWVyeVBhcmFtcyI6eyJuYW1lIjoid29vbHdvcnRocyIsImxpbWl0Ijo1fX0sIm91dHB1dCI6eyJ0eXBlIjoianNvbiIsImZvcm1hdCI6ImFwcGxpY2F0aW9uL2pzb24iLCJleGFtcGxlIjp7InF1ZXJ5Ijp7Im5hbWUiOiJ3b29sd29ydGhzIn0sImNvdW50IjoxLCJjaGFyZ2VkIjp0cnVlLCJyZXN1bHRzIjpbeyJjb21wYW55X25hbWUiOiJXT09MV09SVEhTIEdST1VQIExJTUlURUQiLCJhY24iOiIwMDAwMTQ2NzUiLCJhYm4iOiI4ODAwMDAxNDY3NSIsInN0YXR1cyI6IlJlZ2lzdGVyZWQiLCJlbnRpdHlfdHlwZSI6IkF1c3RyYWxpYW4gcHVibGljIGNvbXBhbnkiLCJkYXRlX29mX3JlZ2lzdHJhdGlvbiI6IjE5MjQtMDktMjIifV19fX0sInNjaGVtYSI6eyIkc2NoZW1hIjoiaHR0cHM6Ly9qc29uLXNjaGVtYS5vcmcvZHJhZnQvMjAyMC0xMi9zY2hlbWEiLCJ0aXRsZSI6IkJhemFhciBkaXNjb3ZlcnkgaW5mbyBmb3IgdGhlIGNvbXBhbnkgbG9va3VwIGVuZHBvaW50IiwidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsiaW5wdXQiOnsidHlwZSI6Im9iamVjdCIsInByb3BlcnRpZXMiOnsidHlwZSI6eyJjb25zdCI6Imh0dHAifSwibWV0aG9kIjp7ImNvbnN0IjoiR0VUIn0sImRpc2NvdmVyYWJsZSI6eyJ0eXBlIjoiYm9vbGVhbiJ9LCJxdWVyeVBhcmFtcyI6eyJ0eXBlIjoib2JqZWN0In19LCJyZXF1aXJlZCI6WyJ0eXBlIiwibWV0aG9kIiwicXVlcnlQYXJhbXMiXX0sIm91dHB1dCI6eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJ0eXBlIjp7InR5cGUiOiJzdHJpbmcifSwiZm9ybWF0Ijp7InR5cGUiOiJzdHJpbmcifSwiZXhhbXBsZSI6eyJ0eXBlIjoib2JqZWN0In19LCJyZXF1aXJlZCI6WyJ0eXBlIl19fSwicmVxdWlyZWQiOlsiaW5wdXQiLCJvdXRwdXQiXX19fX0=",
+  "v1Body": {
+    "x402Version": 1,
+    "error": "payment required",
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "base",
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "payTo": "0xAe6606fDc5e8b63BA62863E130dEead2fAdaE31f",
+        "resource": "https://api.nightshiftbuilds.com/v1/company",
+        "description": "One Australian company register lookup by ABN, ACN or name.",
+        "mimeType": "application/json",
+        "maxTimeoutSeconds": 300,
+        "extra": {
+          "name": "USD Coin",
+          "version": "2"
+        },
+        "outputSchema": {
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "discoverable": true,
+            "queryParams": {
+              "name": "woolworths",
+              "limit": 5
+            }
+          },
+          "output": {
+            "type": "json",
+            "format": "application/json",
+            "example": {
+              "query": {
+                "name": "woolworths"
+              },
+              "count": 1,
+              "charged": true,
+              "results": [
+                {
+                  "company_name": "WOOLWORTHS GROUP LIMITED",
+                  "acn": "000014675",
+                  "abn": "88000014675",
+                  "status": "Registered",
+                  "entity_type": "Australian public company",
+                  "date_of_registration": "1924-09-22"
+                }
+              ]
+            }
+          }
+        },
+        "maxAmountRequired": "10000",
+        "amount": "10000"
+      }
+    ],
+    "request_id": "043c30ee22c7"
+  },
+  "v2Document": {
+    "x402Version": 2,
+    "error": "payment required",
+    "resource": {
+      "url": "https://api.nightshiftbuilds.com/v1/company",
+      "description": "One Australian company register lookup by ABN, ACN or name.",
+      "mimeType": "application/json",
+      "serviceName": "ASIC company lookup",
+      "tags": [
+        "australia",
+        "asic",
+        "company-data",
+        "abn-lookup",
+        "business-registry"
+      ]
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "eip155:8453",
+        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "payTo": "0xAe6606fDc5e8b63BA62863E130dEead2fAdaE31f",
+        "resource": "https://api.nightshiftbuilds.com/v1/company",
+        "description": "One Australian company register lookup by ABN, ACN or name.",
+        "mimeType": "application/json",
+        "maxTimeoutSeconds": 300,
+        "extra": {
+          "name": "USD Coin",
+          "version": "2"
+        },
+        "outputSchema": {
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "discoverable": true,
+            "queryParams": {
+              "name": "woolworths",
+              "limit": 5
+            }
+          },
+          "output": {
+            "type": "json",
+            "format": "application/json",
+            "example": {
+              "query": {
+                "name": "woolworths"
+              },
+              "count": 1,
+              "charged": true,
+              "results": [
+                {
+                  "company_name": "WOOLWORTHS GROUP LIMITED",
+                  "acn": "000014675",
+                  "abn": "88000014675",
+                  "status": "Registered",
+                  "entity_type": "Australian public company",
+                  "date_of_registration": "1924-09-22"
+                }
+              ]
+            }
+          }
+        },
+        "amount": "10000",
+        "maxAmountRequired": "10000"
+      }
+    ],
+    "extensions": {
+      "bazaar": {
+        "info": {
+          "input": {
+            "type": "http",
+            "method": "GET",
+            "discoverable": true,
+            "queryParams": {
+              "name": "woolworths",
+              "limit": 5
+            }
+          },
+          "output": {
+            "type": "json",
+            "format": "application/json",
+            "example": {
+              "query": {
+                "name": "woolworths"
+              },
+              "count": 1,
+              "charged": true,
+              "results": [
+                {
+                  "company_name": "WOOLWORTHS GROUP LIMITED",
+                  "acn": "000014675",
+                  "abn": "88000014675",
+                  "status": "Registered",
+                  "entity_type": "Australian public company",
+                  "date_of_registration": "1924-09-22"
+                }
+              ]
+            }
+          }
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "title": "Bazaar discovery info for the company lookup endpoint",
+          "type": "object",
+          "properties": {
+            "input": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "const": "http"
+                },
+                "method": {
+                  "const": "GET"
+                },
+                "discoverable": {
+                  "type": "boolean"
+                },
+                "queryParams": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type",
+                "method",
+                "queryParams"
+              ]
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "string"
+                },
+                "example": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            }
+          },
+          "required": [
+            "input",
+            "output"
+          ]
+        }
+      }
+    }
+  }
+}

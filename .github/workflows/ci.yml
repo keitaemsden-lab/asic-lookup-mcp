@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Daily, to catch the live endpoint changing its price, payee, token or chain
+    # out from under the recorded fixture. The probe is an unpaid 402, so it costs
+    # nothing and needs no wallet.
+    - cron: '17 20 * * *'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['20.19', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      # Offline for the matrix: a red build should mean a code problem, not a
+      # flaky network on a runner.
+      - run: npm test
+        env:
+          SKIP_LIVE_TESTS: '1'
+      - name: pack contains only what should ship
+        run: |
+          npm pack --dry-run --json > pack.json
+          node -e "
+            const files = require('./pack.json')[0].files.map(f => f.path);
+            const unexpected = files.filter(p => !/^(dist|src)\//.test(p) && !['package.json','README.md','LICENSE'].includes(p));
+            if (unexpected.length) { console.error('unexpected files in tarball:', unexpected); process.exit(1); }
+            console.log(files.length + ' files, all expected');
+          "
+
+  live:
+    # The canary. Separate so it can go red on its own without blocking a PR.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: the live endpoint still asks what we think it asks (unpaid, free)
+        run: npx vitest run test/live-402.test.ts

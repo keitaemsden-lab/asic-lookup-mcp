@@ -1,0 +1,69 @@
+{
+  "name": "@nightshiftbuilds/asic-lookup-mcp",
+  "version": "0.1.0",
+  "mcpName": "io.github.keitaemsden-lab/asic-lookup",
+  "description": "MCP server for the Australian company register: look up any ASIC-registered company by ABN, ACN or name. Paid per call in USDC on Base over x402, from your own wallet.",
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "x402",
+    "australia",
+    "asic",
+    "abn",
+    "acn",
+    "company-lookup",
+    "business-registry"
+  ],
+  "license": "MIT",
+  "author": "Nightshift Builds",
+  "homepage": "https://github.com/keitaemsden-lab/asic-lookup-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keitaemsden-lab/asic-lookup-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/keitaemsden-lab/asic-lookup-mcp/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "bin": {
+    "asic-lookup-mcp": "dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run clean && npm run build && npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@x402/evm": "^2.25.0",
+    "@x402/fetch": "^2.25.0",
+    "viem": "^2.56.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

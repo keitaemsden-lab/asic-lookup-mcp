@@ -1,0 +1,60 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.keitaemsden-lab/asic-lookup",
+  "description": "Look up any Australian company by ABN, ACN or name. USD 0.01 per lookup, paid in USDC via x402.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/keitaemsden-lab/asic-lookup-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@nightshiftbuilds/asic-lookup-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SPEND_CAP_USD",
+          "description": "Total USD this server may spend from your wallet before it stops. Required: the server refuses to start without it. About 100 lookups per dollar.",
+          "isRequired": true,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "PRIVATE_KEY",
+          "description": "Private key of a Base mainnet wallet holding a little USDC. No ETH needed: x402 payments are settled by a facilitator, so the wallet signs off-chain and pays no gas. Use PRIVATE_KEY_FILE instead to keep the key out of your client config.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "PRIVATE_KEY_FILE",
+          "description": "Path to a file containing the wallet private key. Preferred over PRIVATE_KEY. Set exactly one of the two.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
+        },
+        {
+          "name": "MAX_PRICE_USD_PER_CALL",
+          "description": "Most this server will pay for a single lookup. Defaults to 0.01, the advertised price. A 402 asking for more than this is refused rather than paid.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string",
+          "default": "0.01"
+        },
+        {
+          "name": "REQUEST_TIMEOUT_MS",
+          "description": "How long to wait for the API, in milliseconds. 1000 to 300000, default 45000.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "number",
+          "default": "45000"
+        }
+      ]
+    }
+  ]
+}
