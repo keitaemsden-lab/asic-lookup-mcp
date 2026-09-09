@@ -47,14 +47,32 @@ export function formatUsd(atomic: bigint): string {
 }
 
 /**
- * Read an amount off an x402 payment requirement.
+ * Read the amount a requirement will actually be signed for.
  *
- * v1 calls it `maxAmountRequired`, v2 calls it `amount`, and both are integer
- * atomic units of `asset`. An amount that is not an integer string is not
- * something we will sign against, so this returns null rather than guessing.
+ * The two wire versions disagree about which field is authoritative, and
+ * `@x402/core` resolves it by version: v1 signs `maxAmountRequired`, v2 signs
+ * `amount`. Reading them in the other order means screening one number and
+ * signing another, so the version is required rather than assumed. Both are
+ * integer atomic units of `asset`; anything else returns null rather than a
+ * guess, because a number we cannot read is not one we will sign against.
+ *
+ * @param requirement - one `accepts` entry, as it came off the wire
+ * @param x402Version - the version of the document the entry came from
+ * @returns the atomic amount, or null if the entry does not state one readably
  */
-export function atomicFromRequirement(requirement: Record<string, unknown>): bigint | null {
-  const raw = requirement['amount'] ?? requirement['maxAmountRequired'];
+export function atomicFromRequirement(
+  requirement: Record<string, unknown>,
+  x402Version = 2,
+): bigint | null {
+  const raw =
+    x402Version === 1
+      ? requirement['maxAmountRequired'] ?? requirement['amount']
+      : requirement['amount'] ?? requirement['maxAmountRequired'];
+  return atomicFromValue(raw);
+}
+
+/** Parse an integer atomic-unit field, or null if it is not one. */
+export function atomicFromValue(raw: unknown): bigint | null {
   if (typeof raw !== 'string' && typeof raw !== 'number') return null;
   const text = String(raw);
   if (!/^\d+$/.test(text)) return null;

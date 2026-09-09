@@ -9,6 +9,27 @@ export const BASE_NETWORKS = new Set(['base', 'eip155:8453', 'base-mainnet']);
 
 export const DEFAULT_API_BASE_URL = 'https://api.nightshiftbuilds.com';
 
+/**
+ * The only address this server will sign a transfer to, unless told otherwise.
+ *
+ * Recorded from the live 402 on 2026-09-09 and asserted daily by the canary. A
+ * 402 is free to nominate any payee, so screening the payee only for "looks like
+ * an address" means a hijacked endpoint redirects every payment within the
+ * ceiling. Pointing API_BASE_URL somewhere else means setting EXPECTED_PAY_TO to
+ * match, which is the point: changing who gets paid should be deliberate.
+ */
+export const DEFAULT_PAY_TO = '0xAe6606fDc5e8b63BA62863E130dEead2fAdaE31f';
+
+/**
+ * The longest a signature this server produces may stay spendable.
+ *
+ * `maxTimeoutSeconds` in the 402 is what `@x402/evm` turns into the
+ * authorisation's `validBefore`. The live endpoint asks for 300. Unscreened, a
+ * 402 asking for 10000000000 yields an authorisation valid until the year 2343,
+ * which no ledger can meaningfully account for.
+ */
+export const DEFAULT_MAX_AUTHORISATION_SECONDS = 600;
+
 /** The endpoint's advertised price. Also the default per-call ceiling. */
 export const ADVERTISED_PRICE_USD = '0.01';
 
@@ -20,6 +41,11 @@ export interface Config {
   spendCapAtomic: bigint;
   /** Per-lookup ceiling. A single 402 asking for more than this is refused, not paid. */
   maxPricePerCallAtomic: bigint;
+  /** The only payee a signature will ever name. */
+  expectedPayTo: string;
+  /** Ceiling on the 402's `maxTimeoutSeconds`, i.e. on how long a signature lives. */
+  maxAuthorisationSeconds: number;
+  /** Deadline for each network attempt. The paid retry gets its own, not the leftovers. */
   requestTimeoutMs: number;
 }
 
@@ -100,6 +126,30 @@ function readTimeoutMs(env: NodeJS.ProcessEnv): number {
   return value;
 }
 
+function readPayTo(env: NodeJS.ProcessEnv): string {
+  const raw = env['EXPECTED_PAY_TO']?.trim() || DEFAULT_PAY_TO;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(raw)) {
+    throw new ConfigError(`EXPECTED_PAY_TO must be a 0x-prefixed 20-byte address; got ${raw}.`);
+  }
+  return raw;
+}
+
+function readMaxAuthorisationSeconds(env: NodeJS.ProcessEnv): number {
+  const raw = env['MAX_AUTHORISATION_SECONDS']?.trim();
+  if (!raw) return DEFAULT_MAX_AUTHORISATION_SECONDS;
+  if (!/^\d+$/.test(raw)) {
+    throw new ConfigError(`MAX_AUTHORISATION_SECONDS must be a whole number of seconds; got ${raw}.`);
+  }
+  const value = Number(raw);
+  if (value < 30 || value > 3_600) {
+    throw new ConfigError(
+      `MAX_AUTHORISATION_SECONDS must be between 30 and 3600; got ${raw}. It bounds how long a ` +
+        'signature this server hands out stays spendable, so a large value is a large exposure.',
+    );
+  }
+  return value;
+}
+
 /**
  * Load and validate configuration, refusing to produce a Config at all unless a
  * spend cap was set deliberately.
@@ -148,6 +198,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     privateKey: readPrivateKey(env),
     spendCapAtomic,
     maxPricePerCallAtomic,
+    expectedPayTo: readPayTo(env),
+    maxAuthorisationSeconds: readMaxAuthorisationSeconds(env),
     requestTimeoutMs: readTimeoutMs(env),
   };
 }

@@ -157,3 +157,99 @@ cannot produce two payments.
 
 Then rewrite the tautological tests above so each one can actually fail, and add an end-to-end v1
 signing test.
+
+---
+
+# Resolution, 2026-09-09 (same day)
+
+All six blockers and the "should fix" list are fixed on `main`. **Publish is still blocked** pending a
+second independent review of these fixes. `npm test`: 133 passing, up from 88.
+
+## What changed, by finding
+
+**B1 — the ledger now accounts for signatures, not settlements.** `createPaidFetch` registers an
+`onAfterPaymentCreation` hook, so every authorisation this process signs is reported to the ledger
+*before* the paid request is sent, with the value and `validBefore` read out of the payload itself
+rather than out of the 402. Attribution across concurrent tool calls is done with an
+`AsyncLocalStorage` observer, since one paying fetch is shared by every call. `release()` no longer
+means "free": the reservation comes back, but the signed amount is held as **outstanding exposure**
+until its `validBefore` passes, and `remainingAtomic` subtracts it. Ten thousand misses against a USD
+1.00 cap now stop at 100. `screenRequirement` refuses any `maxTimeoutSeconds` above
+`MAX_AUTHORISATION_SECONDS` (default 600; the live endpoint asks 300).
+
+**B2 — the payee can no longer choose what the cap is debited.** `commit()` clamps both sides:
+never more than reserved, never less than what was signed. `price_usd: 0` against a USD 0.01
+signature now debits USD 0.01. The 500-call proof stops at 100.
+
+**B3 — `try/finally` around the body read and everything after it.** `settleDefault()` in the
+`finally` charges if a signature exists and releases if none does, with settle-once semantics so an
+explicit outcome always wins. A hundred failed body reads leave `reserved` at 0 and the server
+still taking lookups.
+
+**B4 — a throw after a signature exists commits.** The catch distinguishes "threw before signing"
+(release, rethrow) from "threw after signing" (commit, and a `LookupError` with `charged: 'unknown'`
+that says the money may have moved). The paid retry also gets its own deadline: the per-attempt
+timeout moved into `createPaidFetch`, so 402 discovery can no longer eat the payment leg's budget.
+
+**B5 — `extra` is screened and `payTo` is pinned.** `extra.assetTransferMethod` must be `eip3009` or
+absent, and any `extra.paymentFlow` is refused, so the signing path cannot be moved onto Permit2 or
+the escrow flow. `payTo` must equal `EXPECTED_PAY_TO` (default: the endpoint's published payee, which
+the live canary asserts). `new ExactEvmScheme(signer)` is still built with no scheme options, with a
+comment saying why.
+
+**B6 — records are normalised, and the envelope is validated, before `structuredContent`.**
+`normaliseCompany` coerces each record to the declared shape (`former_names: null` becomes `[]`)
+while passing unknown keys through, and `toToolResult` validates the whole result against the same
+zod object the SDK will use — on a mismatch it returns the paid text plus the spend summary rather
+than an error with no data.
+
+**Should-fix list.** v1/v2 price precedence now matches what `@x402/core` signs
+(`x402Version === 1 ? maxAmountRequired : amount`), and `buildPolicy` threads the version through.
+A charged 200 with zero results now prints its cost line. "Do not retry" became a control: a
+`RetryLatch` refuses the identical query for `MAX_AUTHORISATION_SECONDS` after any unknown outcome.
+`Retry-After` no longer gets a literal `s` on the HTTP-date form. `renderError` bounds what a
+dependency message can put in a tool result, and the entrypoint aliases `console.log`/`info`/`debug`
+to stderr so the stdout invariant is structural.
+
+## One bug the new tests found
+
+`registerV1('base', new ExactEvmScheme(signer))` could never sign anything. The v2 scheme class
+derives its chain id from a CAIP-2 network and throws `Unsupported network format: base` on every v1
+document. The v1 slot now takes `ExactEvmSchemeV1` from `@x402/evm/exact/v1/client`. The review was
+right that `registerV1` was dead code as far as the suite knew — it was dead code full stop.
+
+## Revert-fail evidence
+
+Every fix was reverted in isolation and the suite re-run. The counts below are failing tests per
+revert; the full list is in the vault note. Reproduce with the script recorded there.
+
+| Revert | What was undone | Tests failing | First failure |
+|---|---|---|---|
+| `B1a` | release() gives back a signed authorisation as if it were free | 5 | SpendLedger holds a signed-then-released authorisation against the cap until it expires |
+| `B1b` | maxTimeoutSeconds unscreened | 3 | screenRequirement refuses an authorisation that would stay spendable for longer than the ledger can account for |
+| `B2` |  commit() trusts the price the payee reports | 3 | SpendLedger never commits more than was reserved, and never less than was signed |
+| `B3` |  no try/finally around the body read | 2 | lookupCompany accounting, against a fetch that really signs settles the reservation when the body stream fails after the headers arrived |
+| `B4` |  a throw after the payment was sent releases | 1 | lookupCompany accounting, against a fetch that really signs charges, and does not release, when the request throws after the payment was sent |
+| `B5a` | extra unscreened | 4 | screenRequirement refuses an extra that moves the signature off the audited EIP-3009 shape |
+| `B5b` | payTo not pinned | 3 | screenRequirement pays only the pinned payee, however well-formed the substitute is |
+| `B6a` | records not normalised before structuredContent | 2 | the MCP surface returns a paid result the API drifted on rather than discarding it |
+| `B6b` | structuredContent not validated against the declared schema | 2 | toToolResult keeps a paid result the SDK would have discarded, as text |
+| `SF1` | v1/v2 price precedence collapsed to 'amount first' | 3 | atomicFromRequirement resolves a document carrying both fields the way the signer does |
+| `SF2` | retry latch removed (advice instead of a control) | 2 | lookupCompany outcomes refuses the identical query after an unknown outcome, rather than advising against it |
+| `SF3` | Retry-After always rendered with a literal 's' | 1 | lookupCompany outcomes releases the reservation on a rate limit and surfaces Retry-After in both forms |
+| `SF4` | charged 200 with no records reported as not charged | 1 | the MCP surface says it was charged when a 200 comes back with no records |
+| `SF5` | paid retry shares one deadline with 402 discovery | 1 | lookupCompany accounting, against a fetch that really signs gives the paid retry its own deadline instead of the leftovers of 402 discovery |
+| `SF6` | v1 slot registered with the v2 scheme class | 1 | the v1 handshake, end to end pays a v1-only 402 with a signature that recovers to the configured wallet |
+| `POL` | the project's own screening policy deleted entirely | 5 | the 402 handshake signs nothing when the endpoint asks to be paid at a different address |
+
+The last row is the reviewer's own experiment: with this project's screening policy deleted, the old
+suite failed **zero** tests because every attack was being refused by `@x402/core` rather than by
+this code. It now fails five, all of them attacks `@x402/core` does not refuse — a redirected payee,
+a centuries-long authorisation, a Permit2 steer, an escrow steer.
+
+## Not done
+
+- The `charged: "unknown"` latch is per process, so a restart clears it. Persisting it would mean
+  writing state to disk, which this server deliberately does not do.
+- Outstanding exposure is tracked in memory only, so a restart forgets authorisations that are still
+  live. A cap is a per-process guarantee either way; the README does not claim otherwise.

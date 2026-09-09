@@ -95,6 +95,51 @@ function stubApi(overrides: Record<string, unknown> = {}): {
   return { fetch: fetchImpl, attempts };
 }
 
+/**
+ * A stub that serves the v1 challenge ONLY: no PAYMENT-REQUIRED header, so the
+ * client has nothing but the v1 body in front of it.
+ *
+ * The v2 stub above is what every other test here exercises, which meant the
+ * `registerV1` path -- a second scheme client, a different price field, a
+ * different envelope version -- was dead code as far as the suite knew.
+ *
+ * @param overrides - fields to change on the recorded v1 payment requirement
+ * @returns the stub fetch and the list of attempts it saw
+ */
+function stubV1Api(overrides: Record<string, unknown> = {}): {
+  fetch: typeof globalThis.fetch;
+  attempts: Attempt[];
+} {
+  const attempts: Attempt[] = [];
+  const body = structuredClone(challenge.v1Body) as unknown as {
+    accepts: Record<string, unknown>[];
+  };
+  body.accepts[0] = { ...body.accepts[0], ...overrides };
+
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input as never, init as never);
+    const attempt: Attempt = {
+      url: request.url,
+      paymentSignature: request.headers.get('PAYMENT-SIGNATURE'),
+      xPayment: request.headers.get('X-PAYMENT'),
+    };
+    attempts.push(attempt);
+
+    if (!attempt.paymentSignature && !attempt.xPayment) {
+      return new Response(JSON.stringify(body), {
+        status: 402,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify(SUCCESS_BODY), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof globalThis.fetch;
+
+  return { fetch: fetchImpl, attempts };
+}
+
 function config(env: NodeJS.ProcessEnv = {}) {
   return loadConfig({
     PRIVATE_KEY: TEST_KEY,
@@ -250,5 +295,159 @@ describe('the 402 handshake', () => {
       'https://api.example.test/v1/company?name=woolworths',
     );
     expect(decodePayment(api.attempts[1]!).payload.authorization.value).toBe('20000');
+  });
+
+  it('signs nothing when the endpoint asks to be paid at a different address', async () => {
+    // Well-formed, on the right chain, in the right token, at the right price --
+    // and pointed at someone else. Every clause but the pin passes.
+    const api = stubApi({ payTo: '0x00000000000000000000000000000000deadbeef' });
+    const error = await createPaidFetch(config(), api.fetch)(
+      'https://api.example.test/v1/company?name=x',
+    ).then(() => null, (reason: unknown) => reason);
+
+    expect(error).not.toBeNull();
+    expect(api.attempts).toHaveLength(1);
+    expect(api.attempts[0]?.paymentSignature).toBeNull();
+    expect(explainPaymentError(error)).toMatch(/is not the payee this server pays/);
+  });
+
+  it('signs nothing when the endpoint asks for an authorisation valid for centuries', async () => {
+    // maxTimeoutSeconds is what @x402/evm turns into validBefore. Unscreened,
+    // this exact 402 yielded a signed authorisation valid until the year 2343 --
+    // for a lookup whose reservation was then released as "free".
+    const api = stubApi({ maxTimeoutSeconds: 10_000_000_000 });
+    const error = await createPaidFetch(config(), api.fetch)(
+      'https://api.example.test/v1/company?name=x',
+    ).then(() => null, (reason: unknown) => reason);
+
+    expect(error).not.toBeNull();
+    expect(api.attempts).toHaveLength(1);
+    expect(api.attempts[0]?.paymentSignature).toBeNull();
+    expect(explainPaymentError(error)).toMatch(/MAX_AUTHORISATION_SECONDS/);
+  });
+
+  it('keeps the authorisation it does sign inside the lifetime it screened for', async () => {
+    const api = stubApi();
+    const before = Math.floor(Date.now() / 1000);
+    await createPaidFetch(config(), api.fetch)('https://api.example.test/v1/company?name=x');
+
+    const validBefore = Number(decodePayment(api.attempts[1]!).payload.authorization.validBefore);
+    expect(validBefore).toBeGreaterThan(before);
+    expect(validBefore).toBeLessThanOrEqual(before + 600);
+  });
+
+  it('signs nothing when the endpoint steers the payment onto Permit2', async () => {
+    // ExactEvmScheme branches on extra.assetTransferMethod and would sign a
+    // PermitWitnessTransferFrom to the x402 proxy instead of an EIP-3009
+    // transfer -- a shape this project has not audited, and one that is directly
+    // spendable by any wallet that has ever approved Permit2 for USDC.
+    const api = stubApi({ extra: { name: 'USD Coin', version: '2', assetTransferMethod: 'permit2' } });
+    const error = await createPaidFetch(config(), api.fetch)(
+      'https://api.example.test/v1/company?name=x',
+    ).then(() => null, (reason: unknown) => reason);
+
+    expect(error).not.toBeNull();
+    expect(api.attempts).toHaveLength(1);
+    expect(api.attempts[0]?.paymentSignature).toBeNull();
+    expect(explainPaymentError(error)).toMatch(/EIP-3009/);
+  });
+
+  it('signs nothing when the endpoint steers the payment onto the escrow flow', async () => {
+    const api = stubApi({ extra: { name: 'USD Coin', version: '2', paymentFlow: 'escrow' } });
+    const error = await createPaidFetch(config(), api.fetch)(
+      'https://api.example.test/v1/company?name=x',
+    ).then(() => null, (reason: unknown) => reason);
+
+    expect(error).not.toBeNull();
+    expect(api.attempts).toHaveLength(1);
+    expect(explainPaymentError(error)).toMatch(/paymentFlow/);
+  });
+
+});
+
+describe('the v1 handshake, end to end', () => {
+  it('pays a v1-only 402 with a signature that recovers to the configured wallet', async () => {
+    const api = stubV1Api();
+
+    const response = await createPaidFetch(config(), api.fetch)(
+      'https://api.example.test/v1/company?name=woolworths',
+    );
+
+    expect(response.status).toBe(200);
+    expect(api.attempts).toHaveLength(2);
+    const envelope = decodePayment(api.attempts[1]!);
+    expect(envelope.x402Version).toBe(1);
+
+    const authorization = envelope.payload.authorization;
+    expect(authorization.value).toBe('10000');
+    expect(authorization.to.toLowerCase()).toBe(
+      String(challenge.v1Body.accepts[0].payTo).toLowerCase(),
+    );
+
+    const accepted = challenge.v1Body.accepts[0] as Record<string, any>;
+    const recovered = await recoverTypedDataAddress({
+      domain: {
+        name: accepted.extra.name,
+        version: accepted.extra.version,
+        chainId: 8453,
+        verifyingContract: accepted.asset as `0x${string}`,
+      },
+      types: {
+        TransferWithAuthorization: [
+          { name: 'from', type: 'address' },
+          { name: 'to', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'validAfter', type: 'uint256' },
+          { name: 'validBefore', type: 'uint256' },
+          { name: 'nonce', type: 'bytes32' },
+        ],
+      },
+      primaryType: 'TransferWithAuthorization',
+      message: {
+        from: authorization.from,
+        to: authorization.to,
+        value: BigInt(authorization.value),
+        validAfter: BigInt(authorization.validAfter),
+        validBefore: BigInt(authorization.validBefore),
+        nonce: authorization.nonce,
+      },
+      signature: envelope.payload.signature,
+    });
+    expect(recovered.toLowerCase()).toBe(TEST_ADDRESS.toLowerCase());
+  });
+
+  it('screens a v1 402 by the same rules as a v2 one', async () => {
+    for (const attack of [
+      { payTo: '0x00000000000000000000000000000000deadbeef' },
+      { maxTimeoutSeconds: 10_000_000_000 },
+      { extra: { name: 'USD Coin', version: '2', assetTransferMethod: 'permit2' } },
+      { maxAmountRequired: '5000000', amount: '5000000' },
+      { network: 'eip155:1' },
+      { asset: '0x0000000000000000000000000000000000000001' },
+    ]) {
+      const api = stubV1Api(attack);
+      const error = await createPaidFetch(config(), api.fetch)(
+        'https://api.example.test/v1/company?name=x',
+      ).then(() => null, (reason: unknown) => reason);
+
+      expect(error, JSON.stringify(attack)).not.toBeNull();
+      expect(api.attempts, JSON.stringify(attack)).toHaveLength(1);
+      expect(api.attempts[0]?.paymentSignature, JSON.stringify(attack)).toBeNull();
+      expect(api.attempts[0]?.xPayment, JSON.stringify(attack)).toBeNull();
+    }
+  });
+
+  it('signs the v1 price field the v1 signer signs', async () => {
+    // v1 signs maxAmountRequired. A document whose `amount` sits under the
+    // ceiling while `maxAmountRequired` does not is the shape that would slip a
+    // USD 5.00 authorisation past a screener reading the v2 field.
+    const api = stubV1Api({ amount: '1', maxAmountRequired: '5000000' });
+    const error = await createPaidFetch(config(), api.fetch)(
+      'https://api.example.test/v1/company?name=x',
+    ).then(() => null, (reason: unknown) => reason);
+
+    expect(error).not.toBeNull();
+    expect(api.attempts).toHaveLength(1);
+    expect(api.attempts[0]?.paymentSignature).toBeNull();
   });
 });

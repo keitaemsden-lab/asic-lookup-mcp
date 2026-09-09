@@ -14,6 +14,13 @@ function note(line: string): void {
   process.stderr.write(`asic-lookup-mcp: ${line}\n`);
 }
 
+// stdout is the JSON-RPC stream. Nothing in src writes to it, but a dependency
+// that ever calls console.log would corrupt the transport, so the invariant is
+// made structural rather than left resting on that staying true.
+console.log = console.error;
+console.info = console.error;
+console.debug = console.error;
+
 async function main(): Promise<void> {
   let config;
   try {
@@ -30,9 +37,11 @@ async function main(): Promise<void> {
   const { server, ledger } = buildServer(config);
 
   note(
-    `v${SERVER_VERSION} ready. Paying from ${payerAddress(config)} on Base, ` +
-      `up to USD ${formatUsd(config.maxPricePerCallAtomic)} per lookup and ` +
-      `USD ${formatUsd(ledger.capAtomicValue)} in total before it stops.`,
+    `v${SERVER_VERSION} ready. Paying from ${payerAddress(config)} to ${config.expectedPayTo} ` +
+      `on Base, up to USD ${formatUsd(config.maxPricePerCallAtomic)} per lookup and ` +
+      `USD ${formatUsd(ledger.capAtomicValue)} in total before it stops. Authorisations it signs ` +
+      `stay spendable for at most ${config.maxAuthorisationSeconds}s and are held against the cap ` +
+      'until they expire, whether or not they settle.',
   );
 
   await server.connect(new StdioServerTransport());

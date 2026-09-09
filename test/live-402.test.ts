@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { atomicFromRequirement, formatUsd } from '../src/money.js';
 import { screenRequirement } from '../src/payment.js';
-import { DEFAULT_API_BASE_URL } from '../src/config.js';
+import { DEFAULT_API_BASE_URL, DEFAULT_MAX_AUTHORISATION_SECONDS, DEFAULT_PAY_TO } from '../src/config.js';
 
 /**
  * The one test that touches the real API.
@@ -56,14 +56,21 @@ describe.skipIf(skip)('the live endpoint (unpaid, free)', () => {
     const document = JSON.parse(Buffer.from(header!, 'base64').toString('utf8')) as Record<string, any>;
     const requirement = document.accepts[0] as Record<string, unknown>;
 
-    // The default per-call ceiling. If this fails, the endpoint moved its price
-    // and the README, the tool description and the default all need revisiting.
-    const verdict = screenRequirement(requirement, 10_000n);
+    // The default per-call ceiling, payee and authorisation lifetime. If this
+    // fails, the endpoint moved one of them and the README, the tool description
+    // and the defaults all need revisiting -- which is the point: the payee is
+    // pinned in config, so this is the canary for it moving.
+    const verdict = screenRequirement(requirement, {
+      maxPricePerCallAtomic: 10_000n,
+      expectedPayTo: DEFAULT_PAY_TO,
+      maxAuthorisationSeconds: DEFAULT_MAX_AUTHORISATION_SECONDS,
+    });
     expect(
       verdict,
       `live requirement was ${JSON.stringify(requirement)}`,
     ).toMatchObject({ ok: true });
     expect(formatUsd((verdict as { atomic: bigint }).atomic)).toBe('0.01');
+    expect(String(requirement['payTo']).toLowerCase()).toBe(DEFAULT_PAY_TO.toLowerCase());
   });
 
   it('charges nothing for a malformed query, and says so before any payment', async () => {

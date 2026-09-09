@@ -44,12 +44,23 @@ describe('formatUsd', () => {
 
 describe('atomicFromRequirement', () => {
   it('reads the v2 amount field and the v1 maxAmountRequired field', () => {
-    expect(atomicFromRequirement({ amount: '10000' })).toBe(10_000n);
-    expect(atomicFromRequirement({ maxAmountRequired: '10000' })).toBe(10_000n);
+    expect(atomicFromRequirement({ amount: '10000' }, 2)).toBe(10_000n);
+    expect(atomicFromRequirement({ maxAmountRequired: '10000' }, 1)).toBe(10_000n);
   });
 
-  it('prefers amount when a document carries both', () => {
-    expect(atomicFromRequirement({ amount: '10000', maxAmountRequired: '99999' })).toBe(10_000n);
+  it('resolves a document carrying both fields the way the signer does', () => {
+    // @x402/core signs `maxAmountRequired` on v1 and `amount` on v2. Reading
+    // them in a fixed order means screening one number and signing another --
+    // survivable today only because zod happens to strip unknown keys off the
+    // v1 schema, which is a dependency's accident, not a defence.
+    const both = { amount: '10000', maxAmountRequired: '99999' };
+    expect(atomicFromRequirement(both, 2)).toBe(10_000n);
+    expect(atomicFromRequirement(both, 1)).toBe(99_999n);
+  });
+
+  it('falls back to the other spelling when a document carries only one', () => {
+    expect(atomicFromRequirement({ amount: '10000' }, 1)).toBe(10_000n);
+    expect(atomicFromRequirement({ maxAmountRequired: '10000' }, 2)).toBe(10_000n);
   });
 
   it('returns null for anything that is not an integer atomic amount', () => {

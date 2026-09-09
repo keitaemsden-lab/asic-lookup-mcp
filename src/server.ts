@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ADVERTISED_PRICE_USD, type Config } from './config.js';
 import { SpendLedger } from './ledger.js';
 import { formatUsd } from './money.js';
+import { RetryLatch } from './latch.js';
 import { LookupError, lookupCompany, type LookupResult } from './lookup.js';
 import { createPaidFetch, explainPaymentError, type PaidFetch } from './payment.js';
 import { SpendCapExceeded } from './ledger.js';
@@ -94,12 +95,21 @@ function describeTool(config: Config): string {
   );
 }
 
+/**
+ * The exact object the MCP SDK will validate `structuredContent` against.
+ *
+ * Built from `outputShape` rather than restated, because a second, looser copy
+ * of the schema would validate something the SDK does not.
+ */
+const outputSchema = z.object(outputShape);
+
 export function buildServer(
   config: Config,
-  deps: { fetchWithPay?: PaidFetch; ledger?: SpendLedger } = {},
+  deps: { fetchWithPay?: PaidFetch; ledger?: SpendLedger; latch?: RetryLatch } = {},
 ): { server: McpServer; ledger: SpendLedger } {
   const ledger = deps.ledger ?? new SpendLedger(config.spendCapAtomic);
   const fetchWithPay = deps.fetchWithPay ?? createPaidFetch(config);
+  const latch = deps.latch ?? new RetryLatch();
 
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
@@ -129,11 +139,7 @@ export function buildServer(
     },
     async (args) => {
       try {
-        const result = await lookupCompany(args, { config, fetchWithPay, ledger });
-        return {
-          content: [{ type: 'text' as const, text: renderText(result) }],
-          structuredContent: result as unknown as Record<string, unknown>,
-        };
+        return toToolResult(await lookupCompany(args, { config, fetchWithPay, ledger, latch }));
       } catch (error) {
         return { content: [{ type: 'text' as const, text: renderError(error) }], isError: true };
       }
@@ -143,9 +149,49 @@ export function buildServer(
   return { server, ledger };
 }
 
+/**
+ * Turn a finished lookup into a tool result without ever losing it.
+ *
+ * The SDK validates `structuredContent` against the declared `outputSchema` and
+ * discards the entire result when it does not match -- so an unvalidated hand-off
+ * turns a lookup the wallet has already paid for into `isError: true` with no
+ * data and no spend line, and the model's obvious next move is to pay for it
+ * again. `normaliseCompany` already coerces the records; this is the backstop
+ * for the envelope, and it degrades to text rather than to nothing.
+ */
+export function toToolResult(result: LookupResult): {
+  content: { type: 'text'; text: string }[];
+  structuredContent?: Record<string, unknown>;
+} {
+  const text = renderText(result);
+  const validated = outputSchema.safeParse(result);
+  if (!validated.success) {
+    const field = validated.error.issues[0]?.path.join('.') || 'unknown field';
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text:
+            `${text}\n\n(The API returned a result this server could not fit to its declared ` +
+            `output schema, so the structured form is omitted: ${field}. The text above is the ` +
+            'paid result in full.)',
+        },
+      ],
+    };
+  }
+  return {
+    content: [{ type: 'text' as const, text }],
+    structuredContent: validated.data as unknown as Record<string, unknown>,
+  };
+}
+
 function renderText(result: LookupResult): string {
   if (!result.found) {
-    return `No match. ${result.note ?? ''}\n\n${result.spend}`.trim();
+    // A charged 200 with no records is still a charged lookup. Dropping the cost
+    // line here is how the text came to contradict `charged: true` and teach a
+    // model that misses are always free.
+    const cost = result.charged ? costLine(result) : 'Not charged.';
+    return `No match. ${result.note ?? ''}\n\n${cost} ${result.spend}.`.trim();
   }
   const lines = result.results.map((company) => {
     const identifier = company.acn ?? company.arbn ?? company.abn ?? '(no number)';
@@ -159,9 +205,7 @@ function renderText(result: LookupResult): string {
     const former = company.former_names?.length ? `\n    formerly: ${company.former_names.join(', ')}` : '';
     return `  ${parts.join('  |  ')}${former}`;
   });
-  const cost = result.charged
-    ? `Charged USD ${result.price_usd ?? '0.01'}${result.settlement_tx ? ` (tx ${result.settlement_tx})` : ''}.`
-    : 'Not charged.';
+  const cost = result.charged ? costLine(result) : 'Not charged.';
   return [
     `${result.count} match${result.count === 1 ? '' : 'es'}:`,
     ...lines,
@@ -170,6 +214,11 @@ function renderText(result: LookupResult): string {
     '',
     result.attribution,
   ].join('\n');
+}
+
+function costLine(result: LookupResult): string {
+  const tx = result.settlement_tx ? ` (tx ${result.settlement_tx})` : '';
+  return `Charged USD ${result.price_usd ?? '0.01'}${tx}.`;
 }
 
 function renderError(error: unknown): string {
@@ -184,7 +233,9 @@ function renderError(error: unknown): string {
       'if you retry and it charges again, that is why.';
   }
   // Anything else the x402 client throws lands here. Its messages name the
-  // payment problem, and none of them contain key material.
+  // payment problem, and none of them contain key material -- but they come from
+  // dependencies, so what they can put in a tool result is bounded rather than
+  // trusted.
   const message = error instanceof Error ? error.message : String(error);
-  return `Lookup failed. ${message}`;
+  return `Lookup failed. ${message.slice(0, 500)}`;
 }

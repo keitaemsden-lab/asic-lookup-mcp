@@ -1,11 +1,12 @@
 # asic-lookup-mcp
 
 > [!CAUTION]
-> **Pre-release, and not yet safe for a funded wallet.** An independent review on 2026-09-09 proved
-> that the spend cap does not yet bound what this server can authorise: a "free" miss still hands the
-> payee a live payment authorisation, and a server that under-reports its price can drive an unbounded
-> number of paid calls without moving the cap. See [REVIEW-FINDINGS.md](REVIEW-FINDINGS.md). Nothing is
-> published to npm. Read the code before you point a key at it.
+> **Pre-release. Not published, and not yet cleared for a funded wallet.** An independent review on
+> 2026-09-09 proved the spend cap did not bound what this server could authorise. All six blockers are
+> now fixed and each fix has a test that fails when the fix is reverted — see
+> [REVIEW-FINDINGS.md](REVIEW-FINDINGS.md) for the findings and the evidence. A second independent
+> review of those fixes is the remaining gate. Nothing is on npm. Read the code before you point a key
+> at it.
 
 An MCP server that looks up Australian companies by ABN, ACN or company name against the ASIC Company Register — about 4 million companies.
 
@@ -84,7 +85,9 @@ chmod 600 ~/.config/asic-lookup/key
 | `PRIVATE_KEY_FILE` | one of these two | — | Path to a file containing the wallet's private key. |
 | `PRIVATE_KEY` | one of these two | — | The key itself, `0x` + 64 hex characters. |
 | `MAX_PRICE_USD_PER_CALL` | no | `0.01` | The most one lookup may cost. A `402` asking for more is refused, not paid. |
-| `REQUEST_TIMEOUT_MS` | no | `45000` | How long to wait for the API. 1000–300000. |
+| `REQUEST_TIMEOUT_MS` | no | `45000` | How long to wait for the API, **per network attempt**. The paid retry gets its own budget rather than the leftovers of the unpaid one. 1000–300000. |
+| `EXPECTED_PAY_TO` | no | the endpoint's published payee | The only address this server will sign a transfer to. Change it only with `API_BASE_URL`, and only deliberately. |
+| `MAX_AUTHORISATION_SECONDS` | no | `600` | The longest a signature this server produces may stay spendable. A `402` asking for more is refused. 30–3600. |
 | `API_BASE_URL` | no | `https://api.nightshiftbuilds.com` | Override the endpoint. Must be https. |
 
 The cap is counted per server process. Restarting the server resets it, which is worth knowing if your client restarts servers often.
@@ -119,13 +122,15 @@ It is also a **weekly snapshot, not the official register**. [ASIC Connect](http
 
 Every lookup is one HTTP request that comes back `402 Payment Required` with a price, a payee and a token. The server signs an EIP-3009 authorisation for exactly that amount and retries. A facilitator settles it on Base and the answer comes back with the transaction hash.
 
-Three separate limits sit in front of your signing key:
+Five separate limits sit in front of your signing key:
 
 1. **Only Base mainnet.** No scheme client is registered for any other chain, so a `402` naming one has nothing that could sign it.
-2. **Only USDC, only the `exact` scheme, and only up to `MAX_PRICE_USD_PER_CALL`** — checked against what the endpoint actually asked for, not against what it asked for last time. A `402` is free to demand any number it likes; the number inside the signature is the one that leaves your wallet, so that is the number that gets checked.
-3. **`SPEND_CAP_USD` in total.** Counted before the request is sent, so concurrent lookups cannot collectively overrun it, and reconciled afterwards against what actually happened.
+2. **Only USDC, only the `exact` scheme, only an EIP-3009 transfer, and only up to `MAX_PRICE_USD_PER_CALL`** — checked against what the endpoint actually asked for, not against what it asked for last time. A `402` is free to demand any number it likes; the number inside the signature is the one that leaves your wallet, so that is the number that gets checked. A `402` that tries to steer the signature onto Permit2 or an escrow flow is refused rather than signed.
+3. **Only `EXPECTED_PAY_TO`.** The payee is pinned, not merely checked for being a well-formed address, so a hijacked endpoint cannot redirect your payments to itself within the ceiling.
+4. **Only for `MAX_AUTHORISATION_SECONDS`.** A signature is spendable until its `validBefore`, and the `402` names that. Unbounded, a `402` can obtain an authorisation valid for centuries; here anything over ten minutes is refused.
+5. **`SPEND_CAP_USD` in total, counted against signatures rather than settlements.** The reservation is taken before the request is sent, so concurrent lookups cannot collectively overrun it.
 
-On the reconciliation: a `404` costs nothing because the API releases the authorisation, so the cap is credited back. A `503` whose `charged` field is `"unknown"` is counted **in full**, because settlement may have gone through and understating your spend is the worse error. If you see that, do not retry the identical query — the API's idempotency is keyed on the payment nonce, and a fresh nonce would be a second charge.
+**On the accounting.** What leaves a wallet is a signature, not a settlement, so that is what the cap counts. A `404` costs nothing — but the authorisation it signed is still in the payee's hands and still settleable, so the amount stays held against the cap until its `validBefore` passes, and the spend line says so. Ten thousand "free" misses cannot hand out more live authorisations than your cap. Anything that ends *after* a signature exists — a timeout, a dropped body, a `409`, a `503` of unknown outcome — is **charged**, not released, because a signature in someone else's hands is not a refund. After one of those, the identical query is refused until the authorisation expires: retrying it would sign a second one.
 
 Nothing is broadcast from your machine, and the key is never logged, never returned in a tool result and never included in an error message.
 
@@ -141,11 +146,11 @@ The full dataset is free to download from data.gov.au. This is a lookup service,
 
 ```bash
 npm install
-npm test          # 88 tests: no wallet needed, no money spent
+npm test          # 133 tests: no wallet needed, no money spent
 npm run build
 ```
 
-The suite mocks the 402 handshake with a challenge recorded from the live endpoint and asserts what actually gets signed — the amount, the payee, the token, the chain, and that the signature recovers to the configured wallet. One test hits the real API **unpaid** to read its published price, which is free by design; set `SKIP_LIVE_TESTS=1` to skip it offline.
+The suite mocks the 402 handshake with a challenge recorded from the live endpoint and asserts what actually gets signed — the amount, the payee, the token, the chain, the authorisation lifetime, and that the signature recovers to the configured wallet. Both wire versions are exercised end to end. The accounting tests run against a fetch that really signs, so they can tell "nothing was charged" from "nothing was signed"; every spend-safety fix has a test that fails when the fix is reverted. One test hits the real API **unpaid** to read its published price, which is free by design; set `SKIP_LIVE_TESTS=1` to skip it offline.
 
 ## Links
 
