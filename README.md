@@ -1,5 +1,12 @@
 # asic-lookup-mcp
 
+> [!CAUTION]
+> **Pre-release, and not yet safe for a funded wallet.** An independent review on 2026-09-09 proved
+> that the spend cap does not yet bound what this server can authorise: a "free" miss still hands the
+> payee a live payment authorisation, and a server that under-reports its price can drive an unbounded
+> number of paid calls without moving the cap. See [REVIEW-FINDINGS.md](REVIEW-FINDINGS.md). Nothing is
+> published to npm. Read the code before you point a key at it.
+
 An MCP server that looks up Australian companies by ABN, ACN or company name against the ASIC Company Register — about 4 million companies.
 
 **It spends your money. USD 0.01 per successful lookup, paid automatically from a wallet you configure. A lookup that matches nothing is free, and so is a malformed one.** There is no account and no API key: the payment is the credential, under the [x402](https://x402.org) protocol, in USDC on Base mainnet.
@@ -134,7 +141,7 @@ The full dataset is free to download from data.gov.au. This is a lookup service,
 
 ```bash
 npm install
-npm test          # 87 tests: no wallet needed, no money spent
+npm test          # 88 tests: no wallet needed, no money spent
 npm run build
 ```
 
