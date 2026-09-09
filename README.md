@@ -1,13 +1,5 @@
 # asic-lookup-mcp
 
-> [!CAUTION]
-> **Pre-release. Not published, and not yet cleared for a funded wallet.** An independent review on
-> 2026-09-09 proved the spend cap did not bound what this server could authorise. All six blockers are
-> now fixed, a second independent review found one further blocker which is also fixed, and each fix
-> has a test that fails when the fix is reverted — see [REVIEW-FINDINGS.md](REVIEW-FINDINGS.md) for
-> the findings and the evidence. Nothing is on npm, and publish is the maintainer's call. Read the
-> code before you point a key at it.
-
 An MCP server that looks up Australian companies by ABN, ACN or company name against the ASIC Company Register — about 4 million companies.
 
 **It spends your money. USD 0.01 per successful lookup, paid automatically from a wallet you configure. A lookup that matches nothing is free, and so is a malformed one.** There is no account and no API key: the payment is the credential, under the [x402](https://x402.org) protocol, in USDC on Base mainnet.
@@ -17,6 +9,8 @@ The server will not start until you have told it a total spend cap.
 ## Install
 
 Nothing to install. Point your MCP client at it with `npx` and it fetches on first run.
+
+`npx @nightshiftbuilds/asic-lookup-mcp` is how it runs.
 
 You need a **Base mainnet wallet holding a little USDC**. You do not need ETH: x402 `exact` payments are an off-chain EIP-3009 signature settled by a facilitator, so your wallet signs and pays no gas.
 
