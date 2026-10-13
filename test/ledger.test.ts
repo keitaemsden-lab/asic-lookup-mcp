@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RetryLatch } from '../src/latch.js';
 import { SpendCapExceeded, SpendLedger } from '../src/ledger.js';
 
 /** A clock a test can wind forward, so an authorisation can be watched to expire. */
@@ -200,5 +201,48 @@ describe('SpendLedger', () => {
   it('refuses a nonsensical cap or reservation', () => {
     expect(() => new SpendLedger(0n)).toThrow(RangeError);
     expect(() => new SpendLedger(10_000n).reserve(0n)).toThrow(RangeError);
+  });
+});
+
+// REVIEW-FINDINGS.md, "Not done": outstanding exposure and the retry latch are
+// per process and in memory by design. A fresh instance is a restart, and a
+// restart starts from nothing; these pin that, so a change that loads state
+// from somewhere is a deliberate test edit rather than a silent drift.
+describe('in-memory state on a fresh instance', () => {
+  it('starts a SpendLedger with nothing spent, reserved or outstanding', () => {
+    const ledger = new SpendLedger(1_000_000n);
+    expect(ledger.spentAtomic).toBe(0n);
+    expect(ledger.reservedAtomic).toBe(0n);
+    expect(ledger.outstandingAtomic).toBe(0n);
+    expect(ledger.chargedCallCount).toBe(0);
+    expect(ledger.remainingAtomic).toBe(1_000_000n);
+  });
+
+  it('does not inherit exposure from an earlier ledger in the same process', () => {
+    const clock = fakeClock();
+    const earlier = new SpendLedger(1_000_000n, clock.now);
+    const reservation = earlier.reserve(10_000n);
+    reservation.noteSignature(signature(10_000n, 300, clock));
+    reservation.release();
+    expect(earlier.outstandingAtomic).toBe(10_000n);
+
+    const fresh = new SpendLedger(1_000_000n, clock.now);
+    expect(fresh.outstandingAtomic).toBe(0n);
+    expect(fresh.remainingAtomic).toBe(1_000_000n);
+  });
+
+  it('starts a RetryLatch holding no query', () => {
+    const latch = new RetryLatch();
+    expect(latch.heldMs('abn:51824753556')).toBeNull();
+    expect(latch.heldMs('name:woolworths')).toBeNull();
+  });
+
+  it('does not inherit holds from an earlier latch in the same process', () => {
+    const clock = fakeClock();
+    const earlier = new RetryLatch(clock.now);
+    earlier.hold('abn:51824753556', 300_000);
+    expect(earlier.heldMs('abn:51824753556')).toBe(300_000);
+
+    expect(new RetryLatch(clock.now).heldMs('abn:51824753556')).toBeNull();
   });
 });

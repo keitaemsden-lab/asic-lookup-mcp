@@ -1,10 +1,58 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
+import { RetryLatch } from '../src/latch.js';
 import { SpendLedger } from '../src/ledger.js';
 import { payerAddress } from '../src/payment.js';
 import { buildServer, toToolResult, TOOL_NAME } from '../src/server.js';
+
+/**
+ * Every fs write entry point, wrapped so a test can see whether it was reached.
+ *
+ * The wrappers pass through to the real implementation (config.ts reads a key
+ * file through this same module), so the mock changes nothing but visibility.
+ * Both the named exports and the default/`promises` objects are wrapped: a
+ * write added as `fs.writeFileSync(...)` must be caught as surely as one added
+ * as `writeFileSync(...)`.
+ */
+const fsWrites = vi.hoisted(() => {
+  const SYNC = ['writeFile', 'writeFileSync', 'appendFile', 'appendFileSync', 'createWriteStream'];
+  const PROMISES = ['writeFile', 'appendFile'];
+  const calls: string[] = [];
+  function wrap<T extends Record<string, unknown>>(source: T, names: string[], prefix: string): T {
+    const copy: Record<string, unknown> = { ...source };
+    for (const name of names) {
+      const original = source[name];
+      if (typeof original !== 'function') continue;
+      copy[name] = (...args: unknown[]) => {
+        calls.push(`${prefix}${name}`);
+        return (original as (...a: unknown[]) => unknown)(...args);
+      };
+    }
+    return copy as T;
+  }
+  function mockFs(actual: Record<string, unknown>) {
+    const promises = wrap(actual.promises as Record<string, unknown>, PROMISES, 'promises.');
+    const named = wrap(actual, SYNC, '');
+    const base = (actual.default ?? actual) as Record<string, unknown>;
+    const fallback = { ...wrap(base, SYNC, 'default.'), promises };
+    return { ...named, promises, default: fallback };
+  }
+  function mockPromises(actual: Record<string, unknown>) {
+    const named = wrap(actual, PROMISES, 'fs/promises.');
+    const base = (actual.default ?? actual) as Record<string, unknown>;
+    return { ...named, default: wrap(base, PROMISES, 'fs/promises.default.') };
+  }
+  return { calls, mockFs, mockPromises };
+});
+
+vi.mock('node:fs', async (importOriginal) => fsWrites.mockFs(await importOriginal()));
+vi.mock('fs', async (importOriginal) => fsWrites.mockFs(await importOriginal()));
+vi.mock('node:fs/promises', async (importOriginal) =>
+  fsWrites.mockPromises(await importOriginal()),
+);
+vi.mock('fs/promises', async (importOriginal) => fsWrites.mockPromises(await importOriginal()));
 
 const TEST_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 
@@ -329,6 +377,56 @@ describe('the MCP surface', () => {
     );
     // Held before it became a request, so the retry cost nothing.
     expect(api.calls).toHaveLength(1);
+  });
+});
+
+// REVIEW-FINDINGS.md, "Not done": the ledger and the latch are in memory by
+// design, and the server deliberately writes no state to disk. A lookup flow
+// through the injectable deps that touches every piece of state (a charge, a
+// free miss, an unknown outcome that latches, a latched refusal) must reach no
+// fs write entry point.
+describe('in-memory state', () => {
+  it('runs a full lookup flow without writing anything to disk', async () => {
+    fsWrites.calls.length = 0;
+    const ledger = new SpendLedger(1_000_000n);
+    const latch = new RetryLatch();
+    const replies = [
+      [200, OK],
+      [404, { charged: false, results: [] }],
+      [503, { charged: 'unknown' }],
+    ] as const;
+    let index = 0;
+    const fetchWithPay = (async () => {
+      const [status, body] = replies[Math.min(index++, replies.length - 1)]!;
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as never;
+
+    const { server } = buildServer(config(), { fetchWithPay, ledger, latch });
+    const flowClient = new Client({ name: 'test', version: '0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), flowClient.connect(clientTransport)]);
+
+    const charged = await flowClient.callTool({ name: TOOL_NAME, arguments: { name: 'woolworths' } });
+    expect(charged.isError).toBeFalsy();
+    const miss = await flowClient.callTool({ name: TOOL_NAME, arguments: { name: 'zz' } });
+    expect(miss.isError).toBeFalsy();
+    const unknown = await flowClient.callTool({ name: TOOL_NAME, arguments: { abn: '51824753556' } });
+    expect(unknown.isError).toBe(true);
+    const latched = await flowClient.callTool({ name: TOOL_NAME, arguments: { abn: '51824753556' } });
+    expect(latched.isError).toBe(true);
+    expect((latched.content as { text: string }[])[0]!.text).toMatch(
+      /authorisation it signed is still live/,
+    );
+
+    // The flow really did move state: a charge on the ledger, a hold on the latch.
+    expect(ledger.chargedCallCount).toBeGreaterThan(0);
+    expect(latch.heldMs('abn=51824753556')).toBeGreaterThan(0);
+    expect(index).toBe(3);
+
+    expect(fsWrites.calls).toEqual([]);
   });
 });
 
